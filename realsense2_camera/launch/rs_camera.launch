@@ -44,7 +44,7 @@
   <arg name="clip_distance"         default="-2"/>
   <arg name="linear_accel_cov"      default="0.01"/>
   <arg name="initial_reset"         default="false"/>
-  <arg name="unite_imu_method"      default=""/>
+  <arg name="unite_imu_method"      default="copy"/>
   
   <group ns="$(arg camera)">
     <include file="$(find realsense2_camera)/launch/includes/nodelet.launch.xml">
