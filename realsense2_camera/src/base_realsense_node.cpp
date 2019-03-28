@@ -147,14 +147,14 @@ void BaseRealSenseNode::setupErrorCallback()
     {
         s.set_notifications_callback([&](const rs2::notification& n)
         {
-            std::vector<std::string> error_strings({"RT IC2 Config error", 
+            std::vector<std::string> error_strings({"RT IC2 Config error",
                                                     "Motion Module force pause",
                                                     "stream start failure"});
             if (n.get_severity() >= RS2_LOG_SEVERITY_ERROR)
             {
                 ROS_WARN_STREAM("Hardware Notification:" << n.get_description() << "," << n.get_timestamp() << "," << n.get_severity() << "," << n.get_category());
             }
-            if (error_strings.end() != find_if(error_strings.begin(), error_strings.end(), [&n] (std::string err) 
+            if (error_strings.end() != find_if(error_strings.begin(), error_strings.end(), [&n] (std::string err)
                                         {return (n.get_description().find(err) != std::string::npos); }))
             {
                 ROS_ERROR_STREAM("Hardware Reset is needed. use option: initial_reset:=true");
@@ -262,8 +262,8 @@ void BaseRealSenseNode::registerDynamicOption(ros::NodeHandle& nh, rs2::options 
         {
             if (int(sensor.get_option(option)) > (int)enum_dict.size())
             {
-                ROS_WARN_STREAM("Option " << option_name << 
-                                " has a value: " << int(sensor.get_option(option)) << 
+                ROS_WARN_STREAM("Option " << option_name <<
+                                " has a value: " << int(sensor.get_option(option)) <<
                                 " which is beyond it's scope: " << enum_dict.size());
             ROS_DEBUG_STREAM("Add enum: " << rs2_option_to_string(option) << ". value=" << int(sensor.get_option(option)));
                 for (auto item: enum_dict)
@@ -407,6 +407,7 @@ void BaseRealSenseNode::getParameters()
     _pnh.param("linear_accel_cov", _linear_accel_cov, static_cast<double>(0.01));
     _pnh.param("angular_velocity_cov", _angular_velocity_cov, static_cast<double>(0.01));
     _pnh.param("hold_back_imu_for_frames", _hold_back_imu_for_frames, HOLD_BACK_IMU_FOR_FRAMES);
+    _pnh.param("enable_emitter", _enable_emitter, ENABLE_EMITTER);
 }
 
 void BaseRealSenseNode::setupDevice()
@@ -487,6 +488,11 @@ void BaseRealSenseNode::setupDevice()
         for(auto&& elem : _dev_sensors)
         {
             std::string module_name = elem.get_info(RS2_CAMERA_INFO_NAME);
+
+            if (elem.supports(RS2_OPTION_EMITTER_ENABLED)) {
+              ROS_INFO_STREAM("Emitter enabled: " << _enable_emitter);
+              elem.set_option(RS2_OPTION_EMITTER_ENABLED, _enable_emitter);
+            }
 
             if ("Stereo Module" == module_name)
             {
@@ -933,7 +939,7 @@ BaseRealSenseNode::CIMUHistory::imuData BaseRealSenseNode::CIMUHistory::imuData:
 double BaseRealSenseNode::FillImuData_LinearInterpolation(const stream_index_pair stream_index, const BaseRealSenseNode::CIMUHistory::imuData imu_data, sensor_msgs::Imu& imu_msg)
 {
     static CIMUHistory _imu_history(2);
-    CIMUHistory::sensor_name this_sensor(static_cast<CIMUHistory::sensor_name>(ACCEL == stream_index));
+    CIMUHistory::sensor_name this_sensor(static_cast<CIMUHistory::sensor_name>(GYRO == stream_index));
     CIMUHistory::sensor_name that_sensor(static_cast<CIMUHistory::sensor_name>(!this_sensor));
     _imu_history.add_data(this_sensor, imu_data);
 
@@ -996,98 +1002,250 @@ void BaseRealSenseNode::ConvertFromOpticalFrameToFrame(float3& data)
     data.z = temp.z;
 }
 
-void BaseRealSenseNode::imu_callback_sync(rs2::frame frame, imu_sync_method sync_method)
-{
-    static std::mutex m_mutex;
-    static const stream_index_pair stream_imu = GYRO;
-    static sensor_msgs::Imu imu_msg = sensor_msgs::Imu();
-    static int seq = 0;
-    static bool init_gyro(false), init_accel(false);
-    static double accel_factor(0);
-    imu_msg.header.frame_id = _frame_id[stream_imu];
-    imu_msg.orientation.x = 0.0;
-    imu_msg.orientation.y = 0.0;
-    imu_msg.orientation.z = 0.0;
-    imu_msg.orientation.w = 0.0;
+void BaseRealSenseNode::imu_callback_sync(rs2::frame frame,
+                                          imu_sync_method sync_method) {
 
-    imu_msg.orientation_covariance = { -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-    imu_msg.linear_acceleration_covariance = { _linear_accel_cov, 0.0, 0.0, 0.0, _linear_accel_cov, 0.0, 0.0, 0.0, _linear_accel_cov};
-    imu_msg.angular_velocity_covariance = { _angular_velocity_cov, 0.0, 0.0, 0.0, _angular_velocity_cov, 0.0, 0.0, 0.0, _angular_velocity_cov};
+  static std::mutex m_mutex;
+  static const stream_index_pair stream_imu = GYRO;
+  static sensor_msgs::Imu imu_msg = sensor_msgs::Imu();
+  static int seq = 0;
+  imu_msg.header.frame_id = _frame_id[stream_imu];
+  imu_msg.orientation.x = 0.0;
+  imu_msg.orientation.y = 0.0;
+  imu_msg.orientation.z = 0.0;
+  imu_msg.orientation.w = 0.0;
 
-    m_mutex.lock();
+  imu_msg.orientation_covariance = {-1.0, 0.0, 0.0, 0.0, 0.0,
+                                    0.0,  0.0, 0.0, 0.0};
+  imu_msg.linear_acceleration_covariance = {_linear_accel_cov, 0.0, 0.0, 0.0,
+                                            _linear_accel_cov, 0.0, 0.0, 0.0,
+                                            _linear_accel_cov};
+  imu_msg.angular_velocity_covariance = {_angular_velocity_cov, 0.0, 0.0, 0.0,
+                                         _angular_velocity_cov, 0.0, 0.0, 0.0,
+                                         _angular_velocity_cov};
 
-    while (true)
-    {
-        auto stream = frame.get_profile().stream_type();
-        auto stream_index = (stream == GYRO.first)?GYRO:ACCEL;
-        double frame_time = frame.get_timestamp();
+  m_mutex.lock();
 
-        bool placeholder_false(false);
-        if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
-        {
-            setBaseTime(frame_time, RS2_TIMESTAMP_DOMAIN_SYSTEM_TIME == frame.get_frame_timestamp_domain());
+  static bool sync_based_on_accel = _fps[ACCEL] < _fps[GYRO];
+  static bool sync_based_on_gyro = !sync_based_on_accel;
+
+  static ros::Time timestamp_of_sync(0.0);
+  static bool received_sync_point = false;
+
+  static bool received_interpolation_point_before = false;
+  static float3 measurement_interpolation_point_before;
+  static ros::Time time_interpolation_point_before(0.0);
+
+  static bool received_interpolation_point_after = false;
+  static float3 measurement_interpolation_point_after;
+  static ros::Time time_interpolation_point_after(0.0);
+
+  while (true) {
+    auto stream = frame.get_profile().stream_type();
+    auto stream_index = (stream == GYRO.first) ? GYRO : ACCEL;
+    double frame_time = frame.get_timestamp();
+    bool placeholder_false(false);
+    if (_is_initialized_time_base.compare_exchange_strong(placeholder_false,
+                                                          true)) {
+      setBaseTime(frame_time, RS2_TIMESTAMP_DOMAIN_SYSTEM_TIME ==
+                                  frame.get_frame_timestamp_domain());
+    }
+
+    ros::Time t =
+        ros::Time(_ros_time_base.toSec() + (frame_time /*ms*/ -
+                                            /*ms*/ _camera_time_base) /
+                                               /*ms to seconds*/ 1000);
+
+    if (0 != _synced_imu_publisher->getNumSubscribers()) {
+      auto measurement =
+          *(reinterpret_cast<const float3 *>(frame.get_data()));
+
+      // Convert from optical frame to frame:
+      ConvertFromOpticalFrameToFrame(measurement);
+      imu_msg.header.frame_id = _frame_id[stream_index];
+
+      if (GYRO == stream_index) {
+        if (sync_based_on_gyro) {
+          // We only need this measurement if we have already have an
+          // interpolation point before, otherwise we cannot generate a accel
+          // measurement at this point.
+          if (received_interpolation_point_before &&
+              t >= time_interpolation_point_before) {
+            imu_msg.angular_velocity.x = measurement.x;
+            imu_msg.angular_velocity.y = measurement.y;
+            imu_msg.angular_velocity.z = measurement.z;
+
+            timestamp_of_sync = t;
+            received_sync_point = true;
+          }
+        } else {
+          if (received_sync_point && t >= timestamp_of_sync &&
+              !received_interpolation_point_after) {
+            if (!received_interpolation_point_before) {
+              ROS_ERROR("Something is fishy! Received a sync point, but no "
+                        "interpolation point before!");
+            }
+
+            measurement_interpolation_point_after = measurement;
+            time_interpolation_point_after = t;
+            received_interpolation_point_after = true;
+          } else if (!received_sync_point) {
+            if (received_interpolation_point_after) {
+              ROS_ERROR("Something is fishy! Received no sync point, but an "
+                        "interpolation point after!");
+            }
+
+            // If we already received a interpolation point before,
+            // but not a sync point, we replace the existing sync
+            // point, since this one is closer.
+            measurement_interpolation_point_before = measurement;
+            time_interpolation_point_before = t;
+            received_interpolation_point_before = true;
+          } else if (received_sync_point &&
+                     !received_interpolation_point_before) {
+            ROS_ERROR("Something is fishy! We received a sync point, but "
+                      "haven't set a interpolation point before yet.");
+            break;
+          }
+        }
+      } else if (ACCEL == stream_index) {
+        Eigen::Vector3d v(measurement.x, measurement.y, measurement.z);
+        measurement.x = v.x();
+        measurement.y = v.y();
+        measurement.z = v.z();
+
+        if (sync_based_on_accel) {
+          // We only need this measurement if we have already have an
+          // interpolation point before, otherwise we cannot generate a gyro
+          // measurement at this point.
+          if (received_interpolation_point_before &&
+              t >= time_interpolation_point_before) {
+            imu_msg.linear_acceleration.x = measurement.x;
+            imu_msg.linear_acceleration.y = measurement.y;
+            imu_msg.linear_acceleration.z = measurement.z;
+
+            timestamp_of_sync = t;
+            received_sync_point = true;
+          }
+        } else {
+          if (received_sync_point && t >= timestamp_of_sync &&
+              !received_interpolation_point_after) {
+            if (!received_interpolation_point_before) {
+              ROS_ERROR("Something is fishy! Received a sync point, but no "
+                        "interpolation point before!");
+            }
+
+            measurement_interpolation_point_after = measurement;
+            time_interpolation_point_after = t;
+            received_interpolation_point_after = true;
+          } else if (!received_sync_point) {
+            if (received_interpolation_point_after) {
+              ROS_ERROR("Something is fishy! Received no sync point, but an "
+                        "interpolation point after!");
+            }
+
+            // If we already received a interpolation point before,
+            // but not a sync point, we replace the existing sync
+            // point, since this one is closer.
+            measurement_interpolation_point_before = measurement;
+            time_interpolation_point_before = t;
+            received_interpolation_point_before = true;
+          } else if (received_sync_point &&
+                     !received_interpolation_point_before) {
+            ROS_ERROR("Something is fishy! We received a sync point, but "
+                      "haven't set a interpolation point before yet.");
+            break;
+          }
+        }
+      }
+
+      // Check if we received a sync point and both interpolation points, if yes
+      // interpolate and output imu message.
+      if (received_sync_point && received_interpolation_point_before &&
+          received_interpolation_point_after) {
+        if (timestamp_of_sync < time_interpolation_point_before ||
+            timestamp_of_sync > time_interpolation_point_after) {
+          ROS_ERROR("Something is fishy! Interpolation time is not "
+                    "within the interpolation points!");
+          break;
+        }
+
+        if (time_interpolation_point_after == time_interpolation_point_before) {
+          ROS_ERROR("Something is fishy! Interpolation points are identical!");
+          break;
+        }
+
+        // Do linear interpolation.
+        const double interpolation_delta_s =
+            time_interpolation_point_after.toSec() -
+            time_interpolation_point_before.toSec();
+        if (interpolation_delta_s <= 0.0) {
+          ROS_ERROR("Something is fishy! interpolation delta is "
+                    "not positive!");
+          break;
+        }
+        const double factor_before = (timestamp_of_sync.toSec() -
+                                      time_interpolation_point_before.toSec()) /
+                                     interpolation_delta_s;
+        const double factor_after = (time_interpolation_point_after.toSec() -
+                                     timestamp_of_sync.toSec()) /
+                                    interpolation_delta_s;
+
+        float3 interpolated_point;
+        interpolated_point.x =
+            measurement_interpolation_point_before.x * factor_before +
+            measurement_interpolation_point_after.x * factor_after;
+        interpolated_point.y =
+            measurement_interpolation_point_before.y * factor_before +
+            measurement_interpolation_point_after.y * factor_after;
+        interpolated_point.z =
+            measurement_interpolation_point_before.z * factor_before +
+            measurement_interpolation_point_after.z * factor_after;
+
+        if (sync_based_on_accel) {
+          imu_msg.angular_velocity.x = interpolated_point.x;
+          imu_msg.angular_velocity.y = interpolated_point.y;
+          imu_msg.angular_velocity.z = interpolated_point.z;
+        } else {
+          imu_msg.linear_acceleration.x = interpolated_point.x;
+          imu_msg.linear_acceleration.y = interpolated_point.y;
+          imu_msg.linear_acceleration.z = interpolated_point.z;
         }
 
         seq += 1;
-        double elapsed_camera_ms = (/*ms*/ frame_time - /*ms*/ _camera_time_base) / 1000.0;
+        imu_msg.header.seq = seq;
+        imu_msg.header.stamp = t;
 
-        if (0 != _synced_imu_publisher->getNumSubscribers())
-        {
-            auto crnt_reading = *(reinterpret_cast<const float3*>(frame.get_data()));
-            if (true)
-            {
-                // Convert from optical frame to frame:
-                ConvertFromOpticalFrameToFrame(crnt_reading);
-                imu_msg.header.frame_id = _frame_id[stream_index];
-            }
-            if (GYRO == stream_index)
-            {
-                init_gyro = true;
-            }
-            if (ACCEL == stream_index)
-            {
-                if (!init_accel)
-                {
-                    // Init accel_factor:
-                    Eigen::Vector3d v(crnt_reading.x, crnt_reading.y, crnt_reading.z);
-                    accel_factor = 9.81 / v.norm();
-                    ROS_INFO_STREAM("accel_factor set to: " << accel_factor);
-                }
-                init_accel = true;
-                if (true)
-                {
-                    Eigen::Vector3d v(crnt_reading.x, crnt_reading.y, crnt_reading.z);
-                    v*=accel_factor;
-                    crnt_reading.x = v.x();
-                    crnt_reading.y = v.y();
-                    crnt_reading.z = v.z();
-                }
-            }
-            CIMUHistory::imuData imu_data(crnt_reading, elapsed_camera_ms);
-            switch (sync_method)
-            {
-                case NONE: //Cannot really be NONE. Just to avoid compilation warning.
-                case COPY:
-                    elapsed_camera_ms = FillImuData_Copy(stream_index, imu_data, imu_msg);
-                    break;
-                case LINEAR_INTERPOLATION:
-                    elapsed_camera_ms = FillImuData_LinearInterpolation(stream_index, imu_data, imu_msg);
-                    break;
-            }
-            if (elapsed_camera_ms < 0)
-                break;
-            ros::Time t(_ros_time_base.toSec() + elapsed_camera_ms);
-            imu_msg.header.seq = seq;
-            imu_msg.header.stamp = t;
-            if (!(init_gyro && init_accel))
-                break;
-            _synced_imu_publisher->Publish(imu_msg);
-            ROS_DEBUG("Publish united %s stream", rs2_stream_to_string(frame.get_profile().stream_type()));
-        }
+        ROS_DEBUG("Publish united %s stream",
+                  rs2_stream_to_string(frame.get_profile().stream_type()));
+        _synced_imu_publisher->Publish(imu_msg);
+
+        // Measurement after, becomes before:
+        measurement_interpolation_point_before =
+            measurement_interpolation_point_after;
+        time_interpolation_point_before = time_interpolation_point_after;
+        received_interpolation_point_before = true;
+
+        // Reset flags
+        received_sync_point = false;
+        received_interpolation_point_after = false;
+
+      } else if (received_sync_point && !received_interpolation_point_before) {
+        ROS_WARN("Something is fishy! Reached sync point, but no "
+                 "interpolation point before! Could be ok, the in "
+                 "the beginning, but not afterwards.");
         break;
+      } else if (!received_sync_point && received_interpolation_point_after) {
+        ROS_ERROR("Something is fishy! Didn't reach sync point, but "
+                  "there is already an interpolation point after!");
+        break;
+      }
+      // Things are fine.
     }
-    m_mutex.unlock();
-};
+    break;
+  }
+  m_mutex.unlock();
+}
 
 void BaseRealSenseNode::imu_callback(rs2::frame frame)
 {
@@ -1230,7 +1388,7 @@ void BaseRealSenseNode::pose_callback(rs2::frame frame)
 void BaseRealSenseNode::frame_callback(rs2::frame frame)
 {
     _synced_imu_publisher->Pause();
-    
+
     try{
         double frame_time = frame.get_timestamp();
 
@@ -1247,6 +1405,7 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
         if (_sync_frames)
         {
             t = ros::Time::now();
+            ROS_WARN("The driver is using ros::Time::nos() to timestamp the images! Turn off enable_sync!");
         }
         else
         {
@@ -1715,8 +1874,8 @@ void BaseRealSenseNode::publishPointCloud(rs2::points pc, const ros::Time& t, co
     if (use_texture)
     {
         std::set<rs2_format> available_formats{ rs2_format::RS2_FORMAT_RGB8, rs2_format::RS2_FORMAT_Y8 };
-        
-        texture_frame_itr = find_if(frameset.begin(), frameset.end(), [&texture_source_id, &available_formats] (rs2::frame f) 
+
+        texture_frame_itr = find_if(frameset.begin(), frameset.end(), [&texture_source_id, &available_formats] (rs2::frame f)
                                 {return (rs2_stream(f.get_profile().stream_type()) == texture_source_id) &&
                                             (available_formats.find(f.get_profile().format()) != available_formats.end()); });
         if (texture_frame_itr == frameset.end())
@@ -1767,7 +1926,7 @@ void BaseRealSenseNode::publishPointCloud(rs2::points pc, const ros::Time& t, co
     msg_pointcloud.is_dense = true;
 
     sensor_msgs::PointCloud2Modifier modifier(msg_pointcloud);
-    modifier.setPointCloud2FieldsByString(1, "xyz");    
+    modifier.setPointCloud2FieldsByString(1, "xyz");
 
     vertex = pc.get_vertices();
     if (use_texture)
@@ -1862,8 +2021,8 @@ rs2::stream_profile BaseRealSenseNode::getAProfile(const stream_index_pair& stre
 {
     const std::vector<rs2::stream_profile> profiles = _sensors[stream].get_stream_profiles();
     return *(std::find_if(profiles.begin(), profiles.end(),
-                                            [&stream] (const rs2::stream_profile& profile) { 
-                                                return ((profile.stream_type() == stream.first) && (profile.stream_index() == stream.second)); 
+                                            [&stream] (const rs2::stream_profile& profile) {
+                                                return ((profile.stream_type() == stream.first) && (profile.stream_index() == stream.second));
                                             }));
 }
 
@@ -1982,4 +2141,3 @@ bool BaseRealSenseNode::getEnabledProfile(const stream_index_pair& stream_index,
         profile =  *it;
         return true;
     }
-

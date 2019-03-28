@@ -32,8 +32,8 @@ namespace realsense2_camera
     const uint16_t RS435_RGB_PID    = 0x0b07; // AWGC
     const uint16_t RS435i_RGB_PID   = 0x0B3A; // AWGC_MM
     const uint16_t RS405_PID        = 0x0b0c; // DS5U
-    const uint16_t RS_T265_PID      = 0x0b37; // 
-    
+    const uint16_t RS_T265_PID      = 0x0b37; //
+
 
     const bool ALIGN_DEPTH    = false;
     const bool POINTCLOUD     = false;
@@ -52,6 +52,7 @@ namespace realsense2_camera
     const bool ENABLE_COLOR   = true;
     const bool ENABLE_FISHEYE = true;
     const bool ENABLE_IMU     = true;
+    const bool ENABLE_EMITTER = true;
     const bool HOLD_BACK_IMU_FOR_FRAMES = false;
 
 
