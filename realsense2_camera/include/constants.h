@@ -45,7 +45,6 @@ namespace realsense2_camera
 
     const int IMU_FPS         = 0;
 
-
     const bool ENABLE_DEPTH   = true;
     const bool ENABLE_INFRA1  = true;
     const bool ENABLE_INFRA2  = true;
@@ -54,7 +53,7 @@ namespace realsense2_camera
     const bool ENABLE_IMU     = true;
     const bool ENABLE_EMITTER = true;
     const bool HOLD_BACK_IMU_FOR_FRAMES = false;
-
+    const bool PUBLISH_CAMERA_INFO = true;
 
     const std::string DEFAULT_BASE_FRAME_ID            = "camera_link";
     const std::string DEFAULT_ODOM_FRAME_ID            = "odom_frame";

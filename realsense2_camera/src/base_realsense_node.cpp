@@ -352,6 +352,13 @@ void BaseRealSenseNode::getParameters()
         param_name = _stream_name[stream.first] + "_fps";
         ROS_DEBUG_STREAM("reading parameter:" << param_name);
         _pnh.param(param_name, _fps[stream], IMAGE_FPS);
+
+        param_name = _stream_name[stream.first] + "_format";
+        int format_int = 0;
+        ROS_DEBUG_STREAM("reading parameter:" << param_name);
+        _pnh.param(param_name, format_int, format_int);
+        _format[stream] = static_cast<rs2_format>(format_int);
+
         param_name = "enable_" + STREAM_NAME(stream);
         ROS_DEBUG_STREAM("reading parameter:" << param_name);
         _pnh.param(param_name, _enable[stream], true);
@@ -408,6 +415,7 @@ void BaseRealSenseNode::getParameters()
     _pnh.param("angular_velocity_cov", _angular_velocity_cov, static_cast<double>(0.01));
     _pnh.param("hold_back_imu_for_frames", _hold_back_imu_for_frames, HOLD_BACK_IMU_FOR_FRAMES);
     _pnh.param("enable_emitter", _enable_emitter, ENABLE_EMITTER);
+    _pnh.param("publish_camera_info", _publish_camera_info, PUBLISH_CAMERA_INFO);
 }
 
 void BaseRealSenseNode::setupDevice()
@@ -454,6 +462,8 @@ void BaseRealSenseNode::setupDevice()
         ROS_INFO_STREAM("Enable PointCloud: " << ((_pointcloud)?"On":"Off"));
         ROS_INFO_STREAM("Align Depth: " << ((_align_depth)?"On":"Off"));
         ROS_INFO_STREAM("Sync Mode: " << ((_sync_frames)?"On":"Off"));
+        ROS_INFO_STREAM("Enable Emitter: " << ((_enable_emitter)?"On":"Off"));
+        ROS_INFO_STREAM("Publish CameraInfo: " << ((_publish_camera_info)?"On":"Off"));
 
         _dev_sensors = _dev.query_sensors();
 
@@ -490,7 +500,6 @@ void BaseRealSenseNode::setupDevice()
             std::string module_name = elem.get_info(RS2_CAMERA_INFO_NAME);
 
             if (elem.supports(RS2_OPTION_EMITTER_ENABLED)) {
-              ROS_INFO_STREAM("Emitter enabled: " << _enable_emitter);
               elem.set_option(RS2_OPTION_EMITTER_ENABLED, _enable_emitter);
             }
 
@@ -584,7 +593,9 @@ void BaseRealSenseNode::setupPublishers()
 
             std::shared_ptr<FrequencyDiagnostics> frequency_diagnostics(new FrequencyDiagnostics(_fps[stream], stream_name, _serial_no));
             _image_publishers[stream] = {image_transport.advertise(image_raw.str(), 1), frequency_diagnostics};
-            _info_publisher[stream] = _node_handle.advertise<sensor_msgs::CameraInfo>(camera_info.str(), 1);
+            if(_publish_camera_info){
+              _info_publisher[stream] = _node_handle.advertise<sensor_msgs::CameraInfo>(camera_info.str(), 1);
+            }
 
             if (_align_depth && (stream != DEPTH) && stream.second < 2)
             {
@@ -595,7 +606,9 @@ void BaseRealSenseNode::setupPublishers()
                 std::string aligned_stream_name = "aligned_depth_to_" + stream_name;
                 std::shared_ptr<FrequencyDiagnostics> frequency_diagnostics(new FrequencyDiagnostics(_fps[stream], aligned_stream_name, _serial_no));
                 _depth_aligned_image_publishers[stream] = {image_transport.advertise(aligned_image_raw.str(), 1), frequency_diagnostics};
-                _depth_aligned_info_publisher[stream] = _node_handle.advertise<sensor_msgs::CameraInfo>(aligned_camera_info.str(), 1);
+                if(_publish_camera_info){
+                  _depth_aligned_info_publisher[stream] = _node_handle.advertise<sensor_msgs::CameraInfo>(aligned_camera_info.str(), 1);
+                }
             }
 
             if (stream == DEPTH && _pointcloud)
@@ -675,10 +688,13 @@ void BaseRealSenseNode::publishAlignedDepthToOthers(rs2::frameset frames, const 
             continue;
         }
         stream_index_pair sip{stream_type, stream_index};
-        auto& info_publisher = _depth_aligned_info_publisher.at(sip);
-        auto& image_publisher = _depth_aligned_image_publishers.at(sip);
 
-        if(0 != info_publisher.getNumSubscribers() ||
+        auto& image_publisher = _depth_aligned_image_publishers.at(sip);
+        const bool has_info_subscribers =
+            _publish_camera_info
+                ? (0 != _depth_aligned_info_publisher.at(sip).getNumSubscribers())
+                : true;
+        if(has_info_subscribers ||
            0 != image_publisher.first.getNumSubscribers())
         {
             std::shared_ptr<rs2::align> align;
@@ -703,6 +719,83 @@ void BaseRealSenseNode::publishAlignedDepthToOthers(rs2::frameset frames, const 
     }
 }
 
+bool convertRealSenseFormatToRosFormat(const rs2_format &rs_format,
+                                       int *image_format,
+                                       std::string *encoding) {
+  switch (rs_format) {
+  case RS2_FORMAT_ANY:
+    ROS_ERROR("Cannot set image format to ANY");
+    return false;
+    break;
+  case RS2_FORMAT_Z16:
+    *image_format = CV_16UC1;
+    *encoding = sensor_msgs::image_encodings::TYPE_16UC1;
+    break;
+  case RS2_FORMAT_DISPARITY16:
+    // There is no 16bit float type, using 32bit.
+    *image_format = CV_32FC1;
+    *encoding = sensor_msgs::image_encodings::TYPE_32FC1;
+    break;
+  case RS2_FORMAT_XYZ32F:
+    *image_format = CV_32FC3;
+    *encoding = sensor_msgs::image_encodings::TYPE_32FC3;
+    break;
+  // case RS2_FORMAT_YUYV:
+  //   *image_format = CV_8UC3;
+  //   *encoding = sensor_msgs::image_encodings::YUV422;
+  //   break;
+  case RS2_FORMAT_RGB8:
+    *image_format = CV_8UC3;
+    *encoding = sensor_msgs::image_encodings::RGB8;
+    break;
+  case RS2_FORMAT_BGR8:
+    *image_format = CV_8UC3;
+    *encoding = sensor_msgs::image_encodings::BGR8;
+    break;
+  case RS2_FORMAT_RGBA8:
+    *image_format = CV_8UC4;
+    *encoding = sensor_msgs::image_encodings::RGBA8;
+    break;
+  case RS2_FORMAT_BGRA8:
+    *image_format = CV_8UC4;
+    *encoding = sensor_msgs::image_encodings::BGRA8;
+    break;
+  case RS2_FORMAT_Y8:
+    *image_format = CV_8UC1;
+    *encoding = sensor_msgs::image_encodings::MONO8;
+    break;
+  case RS2_FORMAT_Y16:
+    *image_format = CV_16UC1;
+    *encoding = sensor_msgs::image_encodings::MONO16;
+    break;
+  case RS2_FORMAT_RAW10:
+    *image_format = CV_16UC3;
+    *encoding = sensor_msgs::image_encodings::TYPE_16UC1;
+    break;
+  case RS2_FORMAT_RAW16:
+    *image_format = CV_16UC1;
+    *encoding = sensor_msgs::image_encodings::TYPE_16UC1;
+    break;
+  case RS2_FORMAT_RAW8:
+    *image_format = CV_8UC1;
+    *encoding = sensor_msgs::image_encodings::TYPE_8UC1;
+    break;
+  // case RS2_FORMAT_UYVY:
+  //   *image_format = CV_8UC3;
+  //   *encoding = sensor_msgs::image_encodings::YUV422;
+  //   break;
+  case RS2_FORMAT_DISPARITY32:
+    *image_format = CV_32FC1;
+    *encoding = sensor_msgs::image_encodings::TYPE_32FC1;
+    break;
+  default:
+    ROS_ERROR_STREAM("Unknown/unsupported image format type: "
+                     << rs2_format_to_string(rs_format));
+    return false;
+  }
+  return true;
+}
+
 void BaseRealSenseNode::enable_devices()
 {
     for (auto& elem : IMAGE_STREAMS)
@@ -711,44 +804,66 @@ void BaseRealSenseNode::enable_devices()
         {
             auto& sens = _sensors[elem];
             auto profiles = sens.get_stream_profiles();
+
+            ROS_INFO_STREAM("Desired stream config - type: "
+                << rs2_stream_to_string(elem.first) << "(" << elem.second << ")"
+                << "format: " << _format[elem] << ", width: " << _width[elem]
+                << ", height: " << _height[elem] << ", FPS: " << _fps[elem]);
+
+            bool found_compatible_stream_config = false;
+
             for (auto& profile : profiles)
             {
                 auto video_profile = profile.as<rs2::video_stream_profile>();
-                ROS_DEBUG_STREAM("Sensor profile: " <<
-                                    "stream_type: " << rs2_stream_to_string(elem.first) << "(" << elem.second << ")" <<
-                                    "Format: " << video_profile.format() <<
-                                    ", Width: " << video_profile.width() <<
-                                    ", Height: " << video_profile.height() <<
-                                    ", FPS: " << video_profile.fps());
-
                 if ((video_profile.stream_type() == elem.first) &&
                     (_width[elem] == 0 || video_profile.width() == _width[elem]) &&
                     (_height[elem] == 0 || video_profile.height() == _height[elem]) &&
                     (_fps[elem] == 0 || video_profile.fps() == _fps[elem]) &&
+                    (_format[elem] == RS2_FORMAT_ANY || video_profile.format() == _format[elem]) &&
                     video_profile.stream_index() == elem.second)
                 {
                     _width[elem] = video_profile.width();
                     _height[elem] = video_profile.height();
                     _fps[elem] = video_profile.fps();
+                    _format[elem] = video_profile.format();
 
-                    _enabled_profiles[elem].push_back(profile);
+                    if (convertRealSenseFormatToRosFormat(_format[elem], &_image_format[elem.first],
+                                                          &_encoding[elem.first])) {
+                      _enabled_profiles[elem].push_back(profile);
+                      _image[elem] = cv::Mat(_height[elem], _width[elem], _image_format[elem.first], cv::Scalar(0, 0, 0));
 
-                    _image[elem] = cv::Mat(_height[elem], _width[elem], _image_format[elem.first], cv::Scalar(0, 0, 0));
-
-                    ROS_INFO_STREAM(STREAM_NAME(elem) << " stream is enabled - width: " << _width[elem] << ", height: " << _height[elem] << ", fps: " << _fps[elem]);
-                    break;
+                      ROS_INFO_STREAM(" ===> compatible config found: - type: "
+                          << rs2_stream_to_string(elem.first) << "(" << elem.second << ")"
+                          << "format: " << _format[elem] << ", width: " << _width[elem]
+                          << ", height: " << _height[elem] << ", FPS: " << _fps[elem]);
+                      ROS_INFO_STREAM(" ===> enabling " << STREAM_NAME(elem) << " stream!");
+                      found_compatible_stream_config = true;
+                      break;
+                    } else {
+                      ROS_ERROR(" =X=> Failed to get compatible ROS output formats for desired stream config!");
+                      _enable[elem] = false;
+                      break;
+                    }
                 }
             }
-            if (_enabled_profiles.find(elem) == _enabled_profiles.end())
-            {
-                ROS_WARN_STREAM("Given stream configuration is not supported by the device! " <<
-                    " Stream: " << rs2_stream_to_string(elem.first) <<
-                    ", Stream Index: " << elem.second <<
-                    ", Width: " << _width[elem] <<
-                    ", Height: " << _height[elem] <<
-                    ", FPS: " << _fps[elem]);
-                _enable[elem] = false;
+
+          if (!found_compatible_stream_config) {
+            ROS_ERROR(" =X=> ERROR: The desired stream configuration is not supported by the device!");
+            _enable[elem] = false;
+
+            // Print all available profiles.
+            ROS_WARN("These stream configurations are supported:");
+            for (auto &profile : profiles) {
+              auto video_profile = profile.as<rs2::video_stream_profile>();
+              ROS_WARN_STREAM(" ---> available stream config: "
+                              << "type: " << rs2_stream_to_string(elem.first) << "("
+                              << elem.second << ")"
+                              << "format: " << video_profile.format()
+                              << ", width: " << video_profile.width()
+                              << ", height: " << video_profile.height()
+                              << ", FPS: " << video_profile.fps());
             }
+          }
         }
     }
 	if (_align_depth)
@@ -1600,7 +1715,9 @@ void BaseRealSenseNode::setupStreams()
                 if (profile.is<rs2::video_stream_profile>())
                 {
                     auto video_profile = profile.as<rs2::video_stream_profile>();
-                    updateStreamCalibData(video_profile);
+                    if(_publish_camera_info) {
+                      updateStreamCalibData(video_profile);
+                    }
                 }
             }
         }
@@ -2033,7 +2150,7 @@ IMUInfo BaseRealSenseNode::getImuInfo(const stream_index_pair& stream_index)
     rs2_motion_device_intrinsic imuIntrinsics;
     try
     {
-        imuIntrinsics = sp.get_motion_intrinsics();
+        // imuIntrinsics = sp.get_motion_intrinsics();
     }
     catch(const runtime_error &ex)
     {
@@ -2097,10 +2214,13 @@ void BaseRealSenseNode::publishFrame(rs2::frame f, const ros::Time& t,
     }
 
     ++(seq[stream]);
-    auto& info_publisher = info_publishers.at(stream);
+
     auto& image_publisher = image_publishers.at(stream);
-    if(0 != info_publisher.getNumSubscribers() ||
-       0 != image_publisher.first.getNumSubscribers())
+    const bool has_info_subscribers =
+      _publish_camera_info ? 0 != info_publishers.at(stream).getNumSubscribers()
+                         : true;
+    if(has_info_subscribers ||
+      0 != image_publisher.first.getNumSubscribers())
     {
         sensor_msgs::ImagePtr img;
         img = cv_bridge::CvImage(std_msgs::Header(), encoding.at(stream.first), image).toImageMsg();
@@ -2112,14 +2232,16 @@ void BaseRealSenseNode::publishFrame(rs2::frame f, const ros::Time& t,
         img->header.stamp = t;
         img->header.seq = seq[stream];
 
-        auto& cam_info = camera_info.at(stream);
-        if (cam_info.width != width)
-        {
-            updateStreamCalibData(f.get_profile().as<rs2::video_stream_profile>());
+        if(_publish_camera_info){
+          auto& cam_info = camera_info.at(stream);
+          if (cam_info.width != width)
+          {
+              updateStreamCalibData(f.get_profile().as<rs2::video_stream_profile>());
+          }
+          cam_info.header.stamp = t;
+          cam_info.header.seq = seq[stream];
+          info_publishers.at(stream).publish(cam_info);
         }
-        cam_info.header.stamp = t;
-        cam_info.header.seq = seq[stream];
-        info_publisher.publish(cam_info);
 
         image_publisher.first.publish(img);
         image_publisher.second->update();

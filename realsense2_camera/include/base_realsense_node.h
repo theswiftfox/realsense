@@ -236,11 +236,13 @@ namespace realsense2_camera
         double _angular_velocity_cov;
         bool  _hold_back_imu_for_frames;
         bool _enable_emitter;
+        bool _publish_camera_info;
 
         std::map<stream_index_pair, rs2_intrinsics> _stream_intrinsics;
         std::map<stream_index_pair, int> _width;
         std::map<stream_index_pair, int> _height;
         std::map<stream_index_pair, int> _fps;
+        std::map<stream_index_pair, rs2_format> _format;
         std::map<stream_index_pair, bool> _enable;
         std::map<rs2_stream, std::string> _stream_name;
         tf2_ros::StaticTransformBroadcaster _static_tf_broadcaster;
