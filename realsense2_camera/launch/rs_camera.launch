@@ -8,16 +8,16 @@
   <arg name="fisheye_height"      default="480"/>
   <arg name="enable_fisheye"      default="true"/>
 
-  <arg name="depth_width"         default="640"/>
-  <arg name="depth_height"        default="480"/>
+  <arg name="depth_width"         default="1280"/>
+  <arg name="depth_height"        default="720"/>
   <arg name="enable_depth"        default="true"/>
 
-  <arg name="infra1_width"        default="640"/>
-  <arg name="infra1_height"       default="480"/>
+  <arg name="infra1_width"        default="1280"/>
+  <arg name="infra1_height"       default="720"/>
   <arg name="enable_infra1"       default="true"/>
 
-  <arg name="infra2_width"        default="640"/>
-  <arg name="infra2_height"       default="480"/>
+  <arg name="infra2_width"        default="1280"/>
+  <arg name="infra2_height"       default="720"/>
   <arg name="enable_infra2"       default="true"/>
 
   <arg name="color_width"         default="1280"/>
@@ -38,7 +38,7 @@
   <arg name="pointcloud_texture_index"  default="0"/>
 
   <arg name="enable_sync"           default="false"/>
-  <arg name="align_depth"           default="false"/>
+  <arg name="align_depth"           default="true"/>
 
   <arg name="filters"               default=""/>
   <arg name="clip_distance"         default="-2"/>
