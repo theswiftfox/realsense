@@ -40,6 +40,7 @@
   <arg name="enable_pointcloud"   default="false"/>
   <arg name="pointcloud_texture_stream" default="RS2_STREAM_COLOR"/>  <!-- use RS2_STREAM_ANY to avoid using texture -->
   <arg name="pointcloud_texture_index"  default="0"/>
+  <arg name="allow_no_texture_points" default="true" />
 
   <arg name="enable_sync"         default="false"/>
   <arg name="align_depth"         default="false"/>
@@ -93,6 +94,7 @@
     <param name="enable_pointcloud"        type="bool" value="$(arg enable_pointcloud)"/>
     <param name="pointcloud_texture_stream" type="str" value="$(arg pointcloud_texture_stream)"/>
     <param name="pointcloud_texture_index"  type="int" value="$(arg pointcloud_texture_index)"/>
+    <param name="allow_no_texture_points" type="bool" value="$(arg allow_no_texture_points)" />
     <param name="enable_sync"              type="bool" value="$(arg enable_sync)"/>
     <param name="align_depth"              type="bool" value="$(arg align_depth)"/>
 

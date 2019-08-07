@@ -1520,7 +1520,7 @@ void BaseRealSenseNode::frame_callback(rs2::frame frame)
         if (_sync_frames)
         {
             t = ros::Time::now();
-            ROS_WARN("The driver is using ros::Time::nos() to timestamp the images! Turn off enable_sync!");
+            // ROS_WARN("The driver is using ros::Time::nos() to timestamp the images! Turn off enable_sync!");
         }
         else
         {
